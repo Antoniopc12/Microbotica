@@ -41,7 +41,7 @@ QueueHandle_t cola_adc1;
 QueueHandle_t cola_parao;
 QueueHandle_t cola_avanza;
 QueueHandle_t cola_girar;
-QueueHandle_t cola_remolino;
+QueueHandle_t cola_rota;
 
 // VARIABLES FLAGS DE EVENTOS ***
 static EventGroupHandle_t FlagsEventos;
@@ -58,6 +58,8 @@ EventGroupHandle_t FlagsTareas, FlagsEstados;
 #define EVENTO_LINEA_IZQUIERDA 1 << 7
 #define EVENTO_LINEA_DERECHA 1 << 8
 #define EVENTO_LINEA_TRASERA 1 << 9
+#define EVENTO_FIN_MOV 1 << 10
+#define EVENTO_NO_VISTO 1 << 11
 
 
 // DEFINICION ESTADOS
@@ -82,6 +84,8 @@ uint32_t cont_enc_l=0;
 uint8_t posible_rebote = 0;
 int status=0;
 uint32_t g_ulSystemClock;
+uint16_t numPest;
+int timer_on=0;
 
 // SEMÁFOROS ***
 SemaphoreHandle_t semaforo_freertos1;
@@ -90,6 +94,7 @@ SemaphoreHandle_t semaforo_secuencia;
 // TIMERS ***
 TimerHandle_t xTimer_antirrebote;
 TimerHandle_t xTimer_ADC;
+TimerHandle_t xTimer_Linea;
 
 // INTERRUPCIONES ***
 void ADCIntHandler(void);
@@ -160,42 +165,12 @@ unsigned short binary_lookup(unsigned short *A, unsigned short key, unsigned sho
   return imax;    //Al final imax=imin y en dicha posicion hay un numero mayor o igual que el buscado
 }
 
+
 //*****************************************************************************
 //
 // TAREAS
 //
 //*****************************************************************************
-
-// Tarea que parpadea el LED verde un numero aleatorio de veces
-static portTASK_FUNCTION(TareaUnica,pvParameters)
-{
-    int16_t MuestraLeida = 15;
-	while(1)
-	{
-		//Espera a que se active el flag WHISKER_FLAG
-		// Al activarse, lo borra y continua
-	    EventBits_t tarea = xEventGroupWaitBits(FlagsEventos,WHISKER_FLAG,pdTRUE,pdFALSE,portMAX_DELAY);
-	    if(tarea == WHISKER_FLAG)
-	    {
-	        MuestraLeida = 15;
-	        //xQueueSend(cola_avanza,&MuestraLeida,portMAX_DELAY);
-	        //vTaskDelay(100);
-	        /*xEventGroupSetBits(FlagsEventos, PARA_MOVIMIENTO_FLAG);
-	        MuestraLeida = 90;
-	        xQueueSend(cola_girar,&MuestraLeida,portMAX_DELAY);
-	        xQueueSend(cola_remolino,&MuestraLeida,portMAX_DELAY);
-	        MuestraLeida = -90;
-	        xQueueSend(cola_remolino,&MuestraLeida,portMAX_DELAY);
-	        MuestraLeida = -15;
-            xQueueSend(cola_avanza,&MuestraLeida,portMAX_DELAY);
-            xQueueSend(cola_parao,&MuestraLeida,portMAX_DELAY);
-            vTaskDelay(10000);
-            MuestraLeida = -90;
-            xQueueSend(cola_girar,&MuestraLeida,portMAX_DELAY);*/
-	    }
-	}
-}
-
 // Tarea de control de movimiento
 static portTASK_FUNCTION(TareaMovimiento,pvParameters)
 {
@@ -203,7 +178,7 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
     EventBits_t tarea;
     uint16_t angulo;
     int16_t muestra;                    // Variable que guarda lo mandado por las colas
-    uint16_t numPest;                   // Numero de pestañas que debe recorrer el robot para realizar el movimiento
+                  // Numero de pestañas que debe recorrer el robot para realizar el movimiento
 
     while(1)
     {
@@ -218,6 +193,14 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
         {
             xQueueReceive(cola_parao,&muestra,0);
         }
+        else if (Active == cola_rota)
+        {
+            xQueueReceive(cola_rota,NULL,0);
+            duty1 = 83;
+            duty2 = 86;
+            PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
+            PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
+        }
         else if (Active == cola_avanza)
         {
             xQueueReceive(cola_avanza,&muestra,0);
@@ -226,12 +209,11 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
             if(muestra < 0)
             {
                 // Calcula el numero de pestañas que debe recorrar para cumplir el movimiento
-                muestra = muestra * (-1);
-                angulo = muestra/3;
+                angulo = abs(muestra)/3;
                 numPest = angulo/0.52;
 
-                duty1 = 65;
-                duty2 = 95;
+                duty1 = 100;
+                duty2 = 73;
             }
             else
             {
@@ -239,8 +221,8 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
                 angulo = muestra/3;
                 numPest = angulo/0.52;
 
-                duty1 = 95;
-                duty2 = 65;
+                duty1 = 60;
+                duty2 = 87;
             }
 
             PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
@@ -250,8 +232,8 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
             // o a que se le obligue a parar el movimiento al instante
             while(numPest > 0)
             {
-                tarea = xEventGroupWaitBits(FlagsEventos,ENC_RIGHT_FLAG|PARA_MOVIMIENTO_FLAG,pdTRUE,pdFALSE,portMAX_DELAY);
-                if(tarea == ENC_RIGHT_FLAG)
+                tarea = xEventGroupWaitBits(FlagsEventos,ENC_LEFT_FLAG|PARA_MOVIMIENTO_FLAG,pdTRUE,pdFALSE,portMAX_DELAY);
+                if(tarea == ENC_LEFT_FLAG)
                 {
                     numPest--;
                 }
@@ -269,12 +251,11 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
             if(muestra < 0)
             {
                 // Calcula el numero de pestañas que debe recorrar para cumplir el movimiento
-                muestra = muestra * (-1);
-                angulo = (muestra*10)/3;
+                angulo = (abs(muestra)*10)/3;
                 numPest = angulo/30;
 
-                duty1 = 81;
-                duty2 = 87;
+                duty1 = 70;
+                duty2 = 90;
             }
             else
             {
@@ -282,8 +263,8 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
                 angulo = (muestra*10)/3;
                 numPest = angulo/30;
 
-                duty1 = 81;
-                duty2 = 76;
+                duty1 = 90;
+                duty2 = 70;
             }
 
             PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
@@ -293,8 +274,8 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
             // o a que se le obligue a parar el movimiento al instante
             while(numPest > 0)
             {
-                tarea = xEventGroupWaitBits(FlagsEventos,ENC_RIGHT_FLAG|PARA_MOVIMIENTO_FLAG,pdTRUE,pdFALSE,portMAX_DELAY);
-                if(tarea == ENC_RIGHT_FLAG)
+                tarea = xEventGroupWaitBits(FlagsEventos,ENC_LEFT_FLAG|PARA_MOVIMIENTO_FLAG,pdTRUE,pdFALSE,portMAX_DELAY);
+                if(tarea == ENC_LEFT_FLAG)
                 {
                     numPest--;
                 }
@@ -304,57 +285,19 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
                 }
             }
         }
-        else if (Active == cola_remolino)
-        {
-            xQueueReceive(cola_remolino,&muestra,0);
-
-            // Si recibe una muestra negativa gira en el otro sentido
-            if(muestra < 0)
-            {
-                // Calcula el numero de pestañas que debe recorrar para cumplir el movimiento
-                muestra = muestra * (-1);
-                angulo = (muestra*10)/3;
-                numPest = angulo/60;
-
-                duty1 = 87;
-                duty2 = 86;
-            }
-            else
-            {
-                // Calcula el numero de pestañas que debe recorrar para cumplir el movimiento
-                angulo = (muestra*10)/3;
-                numPest = angulo/60;
-
-                duty1 = 76;
-                duty2 = 77;
-            }
-
-            PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
-            PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
-
-            // Espera a que los encoders hayan captado todas las pestañas que deben haber recorrido
-            // o a que se le obligue a parar el movimiento al instante
-            while(numPest > 0)
-            {
-                tarea = xEventGroupWaitBits(FlagsEventos,ENC_RIGHT_FLAG|PARA_MOVIMIENTO_FLAG,pdTRUE,pdFALSE,portMAX_DELAY);
-                if(tarea == ENC_RIGHT_FLAG)
-                {
-                    numPest--;
-                }
-                else if(tarea == PARA_MOVIMIENTO_FLAG)
-                {
-                    numPest = 0;
-                }
-            }
-        }
-
         // Cada movimiento acaba parando
-        /*duty1 = 81;
+        /*duty1 = ;
         duty2 = 82;
         PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
         PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);*/
 
         // Suelto el uso exclusivo de movimiento
+
+        xEventGroupSetBits(FlagsEstados, EVENTO_FIN_MOV);
+        /*duty1 = 90;
+        duty2 = 90;
+        PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
+        PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);*/
         xSemaphoreGive(semaforo_freertos1);
     }
 
@@ -368,32 +311,21 @@ static portTASK_FUNCTION(TareaADC,pvParameters)
     uint32_t MuestraRecibida;
     unsigned short* A;
     A=&Vol[0];
-
     while(1)
     {
 
         xQueueReceive(cola_adc1,&MuestraRecibida,portMAX_DELAY);
         pos=binary_lookup(A,MuestraRecibida,0,(unsigned short)(sizeof(Vol)/sizeof(Vol[0])));
 
-        if (pos > 2 && pos < 15)
+        if (pos > 10 )
         {
             xEventGroupSetBits(FlagsEstados, EVENTO_VISTO);
         }
-        /*if(pos<3)
+        else
         {
-
-        } else if(pos>=3  && pos< 10)
-        {
-
-        } else if(pos>=10  && pos< 15)
-        {
-
+            // Entra en este caso si no ve nada para que cuando ve un objetivo no ande hacia delante sin rumbo, sino que vuelva a buscar
+                xEventGroupSetBits(FlagsEstados, EVENTO_NO_VISTO);
         }
-        else if(pos>=15)
-        {
-
-        }*/
-
     }
 }
 
@@ -401,12 +333,13 @@ static portTASK_FUNCTION(TareaADC,pvParameters)
 // en cada momento del robot.
 static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
 {
-    uint8_t estado = 3;
+    uint8_t estado = ESTADO_INICIAL;
     int16_t movimiento;
+    int16_t cont=0;
     while(1)
     {
         // Espera un evento
-        EventBits_t evento = xEventGroupWaitBits(FlagsEstados,EVENTO_INICIO|EVENTO_VISTO|EVENTO_LINEA_DERECHA|EVENTO_LINEA_IZQUIERDA|EVENTO_LINEA_TRASERA,pdTRUE,pdFALSE,portMAX_DELAY);
+        EventBits_t evento = xEventGroupWaitBits(FlagsEstados,EVENTO_INICIO|EVENTO_VISTO|EVENTO_NO_VISTO|EVENTO_LINEA_DERECHA|EVENTO_LINEA_IZQUIERDA|EVENTO_LINEA_TRASERA|EVENTO_FIN_MOV,pdTRUE,pdFALSE,portMAX_DELAY);
 
         switch(estado)
         {
@@ -414,73 +347,66 @@ static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
             //xQueueSend(cola_parao,&movimiento,portMAX_DELAY);
             if(evento == EVENTO_INICIO)
             {
-                xSemaphoreTake(semaforo_freertos1,portMAX_DELAY);
+                //xSemaphoreTake(semaforo_freertos1,portMAX_DELAY);
                 estado = ESTADO_BUSCANDO_OPONENTE;
-                duty1 = 90;
+                xQueueSend(cola_rota,NULL,portMAX_DELAY);
+                /*duty1 = 90;
                 duty2 = 90;
                 PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
                 PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
-                xSemaphoreGive(semaforo_freertos1);
+                xSemaphoreGive(semaforo_freertos1);*/
             }
             break;
         case ESTADO_BUSCANDO_OPONENTE:
             if(evento == EVENTO_VISTO)
             {
-                xSemaphoreTake(semaforo_freertos1,portMAX_DELAY);
                 estado = ESTADO_ATAQUE_OPONENTE;
-                duty1 = 64;
-                duty2 = 87;
-                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
-                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
-                xSemaphoreGive(semaforo_freertos1);
+                movimiento=5;
+                xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
             }
             else if(evento == EVENTO_LINEA_DERECHA || evento == EVENTO_LINEA_IZQUIERDA)
             {
-                estado = ESTADO_TOQUE_LINEA;
-                xSemaphoreTake(semaforo_freertos1,portMAX_DELAY);
                 estado = ESTADO_BUSCANDO_OPONENTE;
-
-                duty1 = 94;
-                duty2 = 66;
-                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
-                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
-                xSemaphoreGive(semaforo_freertos1);
+                movimiento=-5;
+                xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
+                //xQueueSend(cola_rota,NULL,portMAX_DELAY);
             }
             else if( evento == EVENTO_LINEA_TRASERA)
             {
-                estado = ESTADO_TOQUE_LINEA;
-                xSemaphoreTake(semaforo_freertos1,portMAX_DELAY);
-                duty1 = 95;
-                duty2 = 65;
-                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
-                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
-                xSemaphoreGive(semaforo_freertos1);
+                estado = ESTADO_BUSCANDO_OPONENTE;
+                movimiento=5;
+                xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
+                //xQueueSend(cola_rota,NULL,portMAX_DELAY);
             }
             break;
         case ESTADO_ATAQUE_OPONENTE:
-            if(evento == EVENTO_LINEA_DERECHA || evento == EVENTO_LINEA_IZQUIERDA )
+            if(evento == EVENTO_VISTO)
             {
-                estado = ESTADO_TOQUE_LINEA;
-                xSemaphoreTake(semaforo_freertos1,portMAX_DELAY);
-                duty1 = 95;
-                duty2 = 65;
-                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
-                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
-                xSemaphoreGive(semaforo_freertos1);
-            }
-            else if( evento == EVENTO_LINEA_TRASERA)
+                estado = ESTADO_ATAQUE_OPONENTE;
+                movimiento=5;
+                xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
+            }else if(evento == EVENTO_LINEA_DERECHA || evento == EVENTO_LINEA_IZQUIERDA )
             {
-                estado = ESTADO_TOQUE_LINEA;
-                xSemaphoreTake(semaforo_freertos1,portMAX_DELAY);
-                duty1 = 65;
-                duty2 = 95;
-                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
-                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
-                xSemaphoreGive(semaforo_freertos1);
+                estado = ESTADO_BUSCANDO_OPONENTE;
+
+                movimiento=-5;
+                xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
+                //xQueueSend(cola_rota,NULL,portMAX_DELAY);
+
+            }else if( evento == EVENTO_LINEA_TRASERA)
+            {
+                estado = ESTADO_BUSCANDO_OPONENTE;
+
+                movimiento=5;
+                xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
+                //xQueueSend(cola_rota,NULL,portMAX_DELAY);
+
+            } else if (evento == EVENTO_NO_VISTO)
+            {
+                    estado = ESTADO_BUSCANDO_OPONENTE;
+                    xQueueSend(cola_rota,NULL,portMAX_DELAY);
             }
 
-            break;
-        case ESTADO_TOQUE_LINEA:
             break;
         }
 
@@ -509,12 +435,27 @@ void vTimerCallback_ADC(TimerHandle_t timer)
     xTimerReset(xTimer_ADC, portMAX_DELAY);
 }
 
+void vTimerCallback_Linea(TimerHandle_t timer)
+{
+    if(GPIOPinRead(GPIO_PORTD_BASE,GPIO_PIN_2) == GPIO_PIN_2)
+    {
+        xEventGroupSetBits(FlagsEstados, EVENTO_LINEA_IZQUIERDA);
+    } else if(GPIOPinRead(GPIO_PORTD_BASE,GPIO_PIN_0) == GPIO_PIN_0)
+    {
+        xEventGroupSetBits(FlagsEstados, EVENTO_LINEA_DERECHA);
+    }
+    timer_on = 0;
+    xTimerStop(xTimer_Linea, portMAX_DELAY);
+}
+
 //*****************************************************************************
 //
 // MAIN
 //
 //*****************************************************************************
 int main(void)
+
+
 {
 
 	//
@@ -611,18 +552,13 @@ int main(void)
     }
 
     // Cola que controla cuanto debe girar sobre si mismo
-    cola_remolino=xQueueCreate(8,sizeof(uint32_t));
-    if (cola_remolino==NULL)
+    cola_rota=xQueueCreate(8,sizeof(uint32_t));
+    if (cola_rota==NULL)
     {
         while(1);
     }
 
     // CREACIÓN DE TAREAS **********************************************
-
-	// Creación de tarea de control
-	if (xTaskCreate( TareaUnica, "TUnica", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY+1, NULL )!=pdPASS)
-		while (1);
-
 	// Creación de tarea de control de adc
     if (xTaskCreate( TareaADC, "ADC", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY+1, NULL )!=pdPASS)
             while (1);
@@ -679,7 +615,12 @@ int main(void)
           /* The timer was not created. */
           while(1);
      }
-
+     xTimer_Linea = xTimerCreate("TimerSW2",0.1 * configTICK_RATE_HZ, pdFALSE,NULL,vTimerCallback_Linea);
+     if( xTimer_Linea == NULL )
+     {
+          /* The timer was not created. */
+          while(1);
+     }
      // Crea grupo de colas y añade las existentes
      xTimerStart(xTimer_ADC, portMAX_DELAY);
      grupo_colas = xQueueCreateSet( 16+16+16);
@@ -699,7 +640,7 @@ int main(void)
     {
       while(1);
     }
-     if(xQueueAddToSet(cola_remolino,grupo_colas)!=pdPASS)
+     if(xQueueAddToSet(cola_rota,grupo_colas)!=pdPASS)
     {
       while(1);
     }
@@ -773,21 +714,25 @@ void GPIODIntHandler(void)
 {
     BaseType_t xHigherPriorityTaskWoken=pdFALSE;
     int32_t i32PinStatus=MAP_GPIOIntStatus(GPIO_PORTD_BASE,GPIO_PIN_0|GPIO_PIN_2|GPIO_PIN_3);
-
-    // Activo la flag del encoder que se haya activado
-    if (i32PinStatus & GPIO_PIN_0)
+    if(timer_on == 0)
     {
-        xEventGroupSetBitsFromISR(FlagsEstados, EVENTO_LINEA_IZQUIERDA, &xHigherPriorityTaskWoken );
+        timer_on=1;
+        // Activo la flag del encoder que se haya activado
+        if (i32PinStatus & GPIO_PIN_0)
+        {
+            //xEventGroupSetBitsFromISR(FlagsEstados, EVENTO_LINEA_IZQUIERDA, &xHigherPriorityTaskWoken );
+            xTimerStart(xTimer_Linea, portMAX_DELAY);
+        }
+        else if (i32PinStatus & GPIO_PIN_2)
+        {
+            //xEventGroupSetBitsFromISR(FlagsEstados, EVENTO_LINEA_DERECHA, &xHigherPriorityTaskWoken );
+            xTimerStart(xTimer_Linea, portMAX_DELAY);
+        }
+        else if (i32PinStatus & GPIO_PIN_3)
+        {
+            //xEventGroupSetBitsFromISR(FlagsEstados, EVENTO_LINEA_TRASERA, &xHigherPriorityTaskWoken );
+        }
     }
-    else if (i32PinStatus & GPIO_PIN_2)
-    {
-        xEventGroupSetBitsFromISR(FlagsEstados, EVENTO_LINEA_DERECHA, &xHigherPriorityTaskWoken );
-    }
-    else if (i32PinStatus & GPIO_PIN_3)
-    {
-        xEventGroupSetBitsFromISR(FlagsEstados, EVENTO_LINEA_TRASERA, &xHigherPriorityTaskWoken );
-    }
-
     MAP_GPIOIntClear(GPIO_PORTD_BASE,GPIO_PIN_0|GPIO_PIN_2|GPIO_PIN_3);
     portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
 }
