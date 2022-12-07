@@ -196,6 +196,7 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
         }
         else if (Active == cola_rota)
         {
+            // Cada vez que se le llama se queda rotanto hasta que no se le diga lo contrario
             xQueueReceive(cola_rota,NULL,0);
             duty1 = 83;
             duty2 = 86;
@@ -205,6 +206,7 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
         else if (Active == cola_avanza)
         {
             xQueueReceive(cola_avanza,&muestra,0);
+            // Si recibe 1 avanza hacia adelante hasta que se le diga lo contrario
             if(muestra == 1)
             {
                 duty1 = 60;
@@ -212,6 +214,7 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
                 PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
                 PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
             }
+            // Si recibe -1 avanza hacia atrás hasta que se le diga lo contrario
             else if(muestra == -1)
             {
                 duty1 = 100;
@@ -219,9 +222,13 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
                 PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
                 PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
             }
+            // Si recibe cualquier otro numero avanza la distancia que se le pasa
             else
             {
+                // Se pone a uno para indicar que está haciendo un movimiento definido
+                // con el fin de poder pararlo con urgencia si hiciese falta
                 movimiento_concreto_on = 1;
+
                 // Si recibe una muestra negativa retrocede
                 if(muestra < 0)
                 {
@@ -232,6 +239,7 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
                     duty1 = 100;
                     duty2 = 73;
                 }
+                // Si recibe más de 100 avanza hacia adelante con más fuerza
                 else if(muestra > 100)
                 {
                     // Calcula el numero de pestañas que debe recorrar para cumplir el movimiento
@@ -242,6 +250,7 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
                     duty1 = 55;
                     duty2 = 95;
                 }
+                // Si no avanza hacia adelante
                 else
                 {
                     // Calcula el numero de pestañas que debe recorrar para cumplir el movimiento
@@ -269,12 +278,14 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
                         numPest = 0;
                     }
                 }
+                // Cuando termina el movimiento para
                 duty1 = 76;
                 duty2 = 82;
                 PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
                 PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
                 xSemaphoreGive(semaforo_freertos1);
 
+                // Vuelve a un modo de movimiento fácil de cambiar y no definido (u otro definido)
                 movimiento_concreto_on = 0;
             }
 
@@ -380,6 +391,7 @@ static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
         case ESTADO_BUSCANDO_OPONENTE:
             if(evento == EVENTO_VISTO)
             {
+                // Si lo detecta avanza hacia él hasta que deje de verlo
                 estado = ESTADO_ATAQUE_OPONENTE;
                 movimiento = 1;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
@@ -387,27 +399,37 @@ static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
             else if(evento == EVENTO_LINEA_DERECHA || evento == EVENTO_LINEA_IZQUIERDA)
             {
                 estado = ESTADO_BUSCANDO_OPONENTE;
+
+                // Si esta realizando algún movimiento definido debo pararlo para
+                // dar prioridad a no salirse
                 if(movimiento_concreto_on == 1)
                 {
                     xEventGroupSetBits(FlagsEventos, PARA_MOVIMIENTO_FLAG);
                 }
                 movimiento = -15;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
+                // Una vez está fuera de peligro vuelve a buscar
                 xQueueSend(cola_rota,NULL,portMAX_DELAY);
             }
             else if( evento == EVENTO_LINEA_TRASERA)
             {
                 estado = ESTADO_BUSCANDO_OPONENTE;
+
+                // Si esta realizando algún movimiento definido debo pararlo para
+                // dar prioridad a no salirse
                 if(movimiento_concreto_on == 1)
                 {
                     xEventGroupSetBits(FlagsEventos, PARA_MOVIMIENTO_FLAG);
                 }
                 movimiento = 15;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
+                // Una vez está fuera de peligro vuelve a buscar
                 xQueueSend(cola_rota,NULL,portMAX_DELAY);
             }
             else if(evento == WHISKER_FLAG)
             {
+                // Si se activa el whisker retrocede un poco y avanza
+                // con más fuerza para darle un golpe de impacto
                 movimiento = -10;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
                 movimiento = 120;
@@ -421,35 +443,47 @@ static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
                 estado = ESTADO_ATAQUE_OPONENTE;
                 movimiento = 1;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
-            }else if(evento == EVENTO_LINEA_DERECHA || evento == EVENTO_LINEA_IZQUIERDA )
+            }
+            else if(evento == EVENTO_LINEA_DERECHA || evento == EVENTO_LINEA_IZQUIERDA )
             {
                 estado = ESTADO_BUSCANDO_OPONENTE;
+
+                // Si esta realizando algún movimiento definido debo pararlo para
+                // dar prioridad a no salirse
                 if(movimiento_concreto_on == 1)
                 {
                     xEventGroupSetBits(FlagsEventos, PARA_MOVIMIENTO_FLAG);
                 }
                 movimiento = -15;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
+                // Una vez está fuera de peligro vuelve a buscar
                 xQueueSend(cola_rota,NULL,portMAX_DELAY);
 
             }else if( evento == EVENTO_LINEA_TRASERA)
             {
                 estado = ESTADO_BUSCANDO_OPONENTE;
+
+                // Si esta realizando algún movimiento definido debo pararlo para
+                // dar prioridad a no salirse
                 if(movimiento_concreto_on == 1)
                 {
                     xEventGroupSetBits(FlagsEventos, PARA_MOVIMIENTO_FLAG);
                 }
                 movimiento = 15;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
+                // Una vez está fuera de peligro vuelve a buscar
                 xQueueSend(cola_rota,NULL,portMAX_DELAY);
 
             } else if (evento == EVENTO_NO_VISTO)
             {
-                    estado = ESTADO_BUSCANDO_OPONENTE;
-                    xQueueSend(cola_rota,NULL,portMAX_DELAY);
+                // Si deja de verlo vuelve a buscar
+                estado = ESTADO_BUSCANDO_OPONENTE;
+                xQueueSend(cola_rota,NULL,portMAX_DELAY);
             }
             else if(evento == WHISKER_FLAG)
             {
+                // Si se activa el whisker retrocede un poco y avanza
+                // con más fuerza para darle un golpe de impacto
                 estado = ESTADO_BUSCANDO_OPONENTE;
                 movimiento = -10;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
@@ -486,12 +520,17 @@ void vTimerCallback_ADC(TimerHandle_t timer)
     xTimerReset(xTimer_ADC, portMAX_DELAY);
 }
 
+// Función callback que se activa pasado un tiempo de captar
+// una señal de línea blanca. Si pasado el tiempo la señal sigue
+// siendo igual, significa que no ha sido un error y debe hacer
+// algo al respecto. Función parecida al antirrebote del whisker.
 void vTimerCallback_Linea(TimerHandle_t timer)
 {
     if(GPIOPinRead(GPIO_PORTD_BASE,GPIO_PIN_2) == GPIO_PIN_2)
     {
         xEventGroupSetBits(FlagsEstados, EVENTO_LINEA_IZQUIERDA);
-    } else if(GPIOPinRead(GPIO_PORTD_BASE,GPIO_PIN_0) == GPIO_PIN_0)
+    }
+    else if(GPIOPinRead(GPIO_PORTD_BASE,GPIO_PIN_0) == GPIO_PIN_0)
     {
         xEventGroupSetBits(FlagsEstados, EVENTO_LINEA_DERECHA);
     }
@@ -513,7 +552,6 @@ int main(void)
 
 
 {
-
     //
     // Set the clocking to run at 40 MHz from the PLL.
     //
@@ -664,13 +702,6 @@ int main(void)
           while(1);
      }
 
-     /*xTimer_Whisker = xTimerCreate("TimerWk",1 * configTICK_RATE_HZ, pdFALSE,NULL,vTimerCallback_Whisker);
-      if( xTimer_Whisker == NULL )
-      {
-           /* The timer was not created. */
-           /*while(1);
-      }*/
-
      // Crea el timer de control del adc
      xTimer_ADC = xTimerCreate("TimerSW3",0.2 * configTICK_RATE_HZ, pdFALSE,NULL,vTimerCallback_ADC);
      if( xTimer_ADC == NULL )
@@ -779,21 +810,18 @@ void GPIODIntHandler(void)
     int32_t i32PinStatus=MAP_GPIOIntStatus(GPIO_PORTD_BASE,GPIO_PIN_0|GPIO_PIN_2|GPIO_PIN_3);
     if(timer_on == 0)
     {
-        timer_on=1;
-        // Activo la flag del encoder que se haya activado
+        // Activo el timer para cuando salte compruebe si ha sido un dato erroneo
+        timer_on = 1;
         if (i32PinStatus & GPIO_PIN_0)
         {
-            //xEventGroupSetBitsFromISR(FlagsEstados, EVENTO_LINEA_IZQUIERDA, &xHigherPriorityTaskWoken );
             xTimerStart(xTimer_Linea, portMAX_DELAY);
         }
         else if (i32PinStatus & GPIO_PIN_2)
         {
-            //xEventGroupSetBitsFromISR(FlagsEstados, EVENTO_LINEA_DERECHA, &xHigherPriorityTaskWoken );
             xTimerStart(xTimer_Linea, portMAX_DELAY);
         }
         else if (i32PinStatus & GPIO_PIN_3)
         {
-            //xEventGroupSetBitsFromISR(FlagsEstados, EVENTO_LINEA_TRASERA, &xHigherPriorityTaskWoken );
             xTimerStart(xTimer_Linea, portMAX_DELAY);
         }
     }
