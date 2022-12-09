@@ -1,16 +1,16 @@
 //*****************************************************************************
 //
-// Codigo de la pr�ctica 2 de la asignatura de microb�tica
-// Autores: Clara Rubio Almagro y Antonio Pe�a Castillo
+// Codigo de la práctica 2 de la asignatura de microbótica
+// Autores: Clara Rubio Almagro y Antonio Peña Castillo
 //
-// Este c�digo est� basado en el c�digo FlagEventos de empotrados
+// Este código está basado en el código FlagEventos de empotrados
 //
 //*****************************************************************************
 
-// LIBRER�AS ***
+// LIBRERÍAS ***
 #include <stdint.h>
 #include <stdbool.h>
-#include <stdlib.h> 			 // rand()
+#include <stdlib.h>              // rand()
 #include "inc/hw_memmap.h"       // TIVA: Definiciones del mapa de memoria
 #include "inc/hw_types.h"        // TIVA: Definiciones API
 #include "inc/hw_ints.h"         // TIVA: Definiciones para configuracion de interrupciones
@@ -47,19 +47,18 @@ QueueHandle_t cola_rota;
 static EventGroupHandle_t FlagsEventos;
 EventGroupHandle_t FlagsTareas, FlagsEstados;
 
-// DEFINICI�N FLAGS DE EVENTOS ***
+// DEFINICIÓN FLAGS DE EVENTOS ***
 #define WHISKER_FLAG 1 << 0         // Si se activa es porque el whisker ha sido pulsado
 #define ENC_RIGHT_FLAG 1 << 1       // Flag del encoder derecho
 #define ENC_LEFT_FLAG 1 << 2        // Flag del encoder izquierdo
-#define PARA_MOVIMIENTO_FLAG 1 << 3 // Se activa cuando se debe parar el movimiento que est� haciendo de golpe
+#define PARA_MOVIMIENTO_FLAG 1 << 3 // Se activa cuando se debe parar el movimiento que esté haciendo de golpe
 #define EVENTO_LINEA 1 << 4           // Se activa cuando el robot ha tocado la linea
 #define EVENTO_INICIO 1 << 5
 #define EVENTO_VISTO 1 << 6
 #define EVENTO_LINEA_IZQUIERDA 1 << 7
 #define EVENTO_LINEA_DERECHA 1 << 8
 #define EVENTO_LINEA_TRASERA 1 << 9
-#define EVENTO_FIN_MOV 1 << 10
-#define EVENTO_NO_VISTO 1 << 11
+#define EVENTO_NO_VISTO 1 << 10
 
 
 // DEFINICION ESTADOS
@@ -69,7 +68,7 @@ EventGroupHandle_t FlagsTareas, FlagsEstados;
 #define ESTADO_INICIAL 3
 
 
-#define PERIOD_PWM 50               // Ciclos de reloj para conseguir una señal periódica de 50Hz (según reloj de periférico usado)
+#define PERIOD_PWM 50               // Ciclos de reloj para conseguir una seÃ±al periÃ³dica de 50Hz (segÃºn reloj de perifÃ©rico usado)
 
 // ADC SHARP ***
 unsigned short Vol[]={349,356,367,376,400,409,426,465,499,531,568,599,624,682,717,849,932,1101,1280,1516};
@@ -77,7 +76,7 @@ unsigned short Dist[]={48,46,44,42,40,38,36,34,32,30,28,26,24,22,20,18,16,14,12,
 unsigned short pos;
 
 // GLOBALES ***
-uint16_t duty1 = 77,duty2 = 82;
+uint16_t duty1 = 76,duty2 = 82;
 uint32_t val_load;
 uint32_t cont_enc_r=0;
 uint32_t cont_enc_l=0;
@@ -86,8 +85,9 @@ int status=0;
 uint32_t g_ulSystemClock;
 uint16_t numPest;
 int timer_on=0;
+uint8_t movimiento_concreto_on = 0;
 
-// SEM�FOROS ***
+// SEMÁFOROS ***
 SemaphoreHandle_t semaforo_freertos1;
 SemaphoreHandle_t semaforo_secuencia;
 
@@ -95,6 +95,7 @@ SemaphoreHandle_t semaforo_secuencia;
 TimerHandle_t xTimer_antirrebote;
 TimerHandle_t xTimer_ADC;
 TimerHandle_t xTimer_Linea;
+TimerHandle_t xTimer_Whisker;
 
 // INTERRUPCIONES ***
 void ADCIntHandler(void);
@@ -122,21 +123,21 @@ __error__(char *pcFilename, unsigned long ulLine)
 //*****************************************************************************
 void vApplicationStackOverflowHook(TaskHandle_t pxTask, char *pcTaskName)
 {
-	//
-	// This function can not return, so loop forever.  Interrupts are disabled
-	// on entry to this function, so no processor interrupts will interrupt
-	// this loop.
-	//
-	while(1)
-	{
-	}
+    //
+    // This function can not return, so loop forever.  Interrupts are disabled
+    // on entry to this function, so no processor interrupts will interrupt
+    // this loop.
+    //
+    while(1)
+    {
+    }
 }
 
 
 void vApplicationIdleHook( void )
 {
-	SysCtlSleep();
-	//SysCtlDeepSleep();
+    SysCtlSleep();
+    //SysCtlDeepSleep();
 }
 
 //*****************************************************************************
@@ -178,14 +179,14 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
     EventBits_t tarea;
     uint16_t angulo;
     int16_t muestra;                    // Variable que guarda lo mandado por las colas
-                  // Numero de pesta�as que debe recorrer el robot para realizar el movimiento
+                  // Numero de pestañas que debe recorrer el robot para realizar el movimiento
 
     while(1)
     {
         // Se bloquea esperando alguna cola
         Active = xQueueSelectFromSet(grupo_colas,portMAX_DELAY);
 
-        // Cada cola coge el sem�foro para tener uso exclusivo de los motores hasta que acaben su movimiento
+        // Cada cola coge el semáforo para tener uso exclusivo de los motores hasta que acaben su movimiento
         xQueueReceive(cola_parao,&muestra,0);
         xSemaphoreTake(semaforo_freertos1,portMAX_DELAY);
         // Identifica que cola ha sido usada
@@ -195,6 +196,7 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
         }
         else if (Active == cola_rota)
         {
+            // Cada vez que se le llama se queda rotanto hasta que no se le diga lo contrario
             xQueueReceive(cola_rota,NULL,0);
             duty1 = 83;
             duty2 = 86;
@@ -204,44 +206,89 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
         else if (Active == cola_avanza)
         {
             xQueueReceive(cola_avanza,&muestra,0);
-
-            // Si recibe una muestra negativa retrocede
-            if(muestra < 0)
+            // Si recibe 1 avanza hacia adelante hasta que se le diga lo contrario
+            if(muestra == 1)
             {
-                // Calcula el numero de pesta�as que debe recorrar para cumplir el movimiento
-                angulo = abs(muestra)/3;
-                numPest = angulo/0.52;
-
-                duty1 = 100;
-                duty2 = 73;
-            }
-            else
-            {
-                // Calcula el numero de pesta�as que debe recorrar para cumplir el movimiento
-                angulo = muestra/3;
-                numPest = angulo/0.52;
-
                 duty1 = 60;
                 duty2 = 87;
+                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
+                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
             }
-
-            PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
-            PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
-
-            // Espera a que los encoders hayan captado todas las pesta�as que deben haber recorrido
-            // o a que se le obligue a parar el movimiento al instante
-            while(numPest > 0)
+            // Si recibe -1 avanza hacia atrás hasta que se le diga lo contrario
+            else if(muestra == -1)
             {
-                tarea = xEventGroupWaitBits(FlagsEventos,ENC_LEFT_FLAG|PARA_MOVIMIENTO_FLAG,pdTRUE,pdFALSE,portMAX_DELAY);
-                if(tarea == ENC_LEFT_FLAG)
-                {
-                    numPest--;
-                }
-                else if(tarea == PARA_MOVIMIENTO_FLAG)
-                {
-                    numPest = 0;
-                }
+                duty1 = 100;
+                duty2 = 73;
+                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
+                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
             }
+            // Si recibe cualquier otro numero avanza la distancia que se le pasa
+            else
+            {
+                // Se pone a uno para indicar que está haciendo un movimiento definido
+                // con el fin de poder pararlo con urgencia si hiciese falta
+                movimiento_concreto_on = 1;
+
+                // Si recibe una muestra negativa retrocede
+                if(muestra < 0)
+                {
+                    // Calcula el numero de pestañas que debe recorrar para cumplir el movimiento
+                    angulo = abs(muestra)/3;
+                    numPest = angulo/0.52;
+
+                    duty1 = 100;
+                    duty2 = 73;
+                }
+                // Si recibe más de 100 avanza hacia adelante con más fuerza
+                else if(muestra > 100)
+                {
+                    // Calcula el numero de pestañas que debe recorrar para cumplir el movimiento
+                    muestra = muestra - 100;
+                    angulo = muestra/3;
+                    numPest = angulo/0.52;
+
+                    duty1 = 55;
+                    duty2 = 95;
+                }
+                // Si no avanza hacia adelante
+                else
+                {
+                    // Calcula el numero de pestañas que debe recorrar para cumplir el movimiento
+                    angulo = muestra/3;
+                    numPest = angulo/0.52;
+
+                    duty1 = 60;
+                    duty2 = 87;
+                }
+
+                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
+                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
+
+                // Espera a que los encoders hayan captado todas las pestañas que deben haber recorrido
+                // o a que se le obligue a parar el movimiento al instante
+                while(numPest > 0)
+                {
+                    tarea = xEventGroupWaitBits(FlagsEventos,ENC_RIGHT_FLAG|PARA_MOVIMIENTO_FLAG,pdTRUE,pdFALSE,portMAX_DELAY);
+                    if(tarea == ENC_RIGHT_FLAG)
+                    {
+                        numPest--;
+                    }
+                    else if(tarea == PARA_MOVIMIENTO_FLAG)
+                    {
+                        numPest = 0;
+                    }
+                }
+                // Cuando termina el movimiento para
+                duty1 = 76;
+                duty2 = 82;
+                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
+                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
+                xSemaphoreGive(semaforo_freertos1);
+
+                // Vuelve a un modo de movimiento fácil de cambiar y no definido (u otro definido)
+                movimiento_concreto_on = 0;
+            }
+
         }
         else if (Active == cola_girar)
         {
@@ -250,7 +297,7 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
             // Si recibe una muestra negativa gira en el otro sentido
             if(muestra < 0)
             {
-                // Calcula el numero de pesta�as que debe recorrar para cumplir el movimiento
+                // Calcula el numero de pestañas que debe recorrar para cumplir el movimiento
                 angulo = (abs(muestra)*10)/3;
                 numPest = angulo/30;
 
@@ -259,7 +306,7 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
             }
             else
             {
-                // Calcula el numero de pesta�as que debe recorrar para cumplir el movimiento
+                // Calcula el numero de pestañas que debe recorrar para cumplir el movimiento
                 angulo = (muestra*10)/3;
                 numPest = angulo/30;
 
@@ -270,12 +317,12 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
             PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
             PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
 
-            // Espera a que los encoders hayan captado todas las pesta�as que deben haber recorrido
+            // Espera a que los encoders hayan captado todas las pestañas que deben haber recorrido
             // o a que se le obligue a parar el movimiento al instante
             while(numPest > 0)
             {
-                tarea = xEventGroupWaitBits(FlagsEventos,ENC_LEFT_FLAG|PARA_MOVIMIENTO_FLAG,pdTRUE,pdFALSE,portMAX_DELAY);
-                if(tarea == ENC_LEFT_FLAG)
+                tarea = xEventGroupWaitBits(FlagsEventos,ENC_RIGHT_FLAG|PARA_MOVIMIENTO_FLAG,pdTRUE,pdFALSE,portMAX_DELAY);
+                if(tarea == ENC_RIGHT_FLAG)
                 {
                     numPest--;
                 }
@@ -285,26 +332,16 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
                 }
             }
         }
-        // Cada movimiento acaba parando
-        /*duty1 = ;
-        duty2 = 82;
-        PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
-        PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);*/
+
 
         // Suelto el uso exclusivo de movimiento
-
-        xEventGroupSetBits(FlagsEstados, EVENTO_FIN_MOV);
-        /*duty1 = 90;
-        duty2 = 90;
-        PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
-        PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);*/
         xSemaphoreGive(semaforo_freertos1);
     }
 
 }
 
 // Tarea de control del sharp
-// Recibe los datos mediante una cola de forma peri�dica
+// Recibe los datos mediante una cola de forma periódica
 static portTASK_FUNCTION(TareaADC,pvParameters)
 {
 
@@ -335,11 +372,10 @@ static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
 {
     uint8_t estado = ESTADO_INICIAL;
     int16_t movimiento;
-    int16_t cont=0;
     while(1)
     {
         // Espera un evento
-        EventBits_t evento = xEventGroupWaitBits(FlagsEstados,EVENTO_INICIO|EVENTO_VISTO|EVENTO_NO_VISTO|EVENTO_LINEA_DERECHA|EVENTO_LINEA_IZQUIERDA|EVENTO_LINEA_TRASERA|EVENTO_FIN_MOV,pdTRUE,pdFALSE,portMAX_DELAY);
+        EventBits_t evento = xEventGroupWaitBits(FlagsEstados,WHISKER_FLAG|EVENTO_INICIO|EVENTO_VISTO|EVENTO_NO_VISTO|EVENTO_LINEA_DERECHA|EVENTO_LINEA_IZQUIERDA|EVENTO_LINEA_TRASERA,pdTRUE,pdFALSE,portMAX_DELAY);
 
         switch(estado)
         {
@@ -350,61 +386,110 @@ static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
                 //xSemaphoreTake(semaforo_freertos1,portMAX_DELAY);
                 estado = ESTADO_BUSCANDO_OPONENTE;
                 xQueueSend(cola_rota,NULL,portMAX_DELAY);
-                /*duty1 = 90;
-                duty2 = 90;
-                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
-                PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000);
-                xSemaphoreGive(semaforo_freertos1);*/
             }
             break;
         case ESTADO_BUSCANDO_OPONENTE:
             if(evento == EVENTO_VISTO)
             {
+                // Si lo detecta avanza hacia él hasta que deje de verlo
                 estado = ESTADO_ATAQUE_OPONENTE;
-                movimiento=5;
+                movimiento = 1;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
             }
             else if(evento == EVENTO_LINEA_DERECHA || evento == EVENTO_LINEA_IZQUIERDA)
             {
                 estado = ESTADO_BUSCANDO_OPONENTE;
-                movimiento=-5;
+
+                // Si esta realizando algún movimiento definido debo pararlo para
+                // dar prioridad a no salirse
+                if(movimiento_concreto_on == 1)
+                {
+                    xEventGroupSetBits(FlagsEventos, PARA_MOVIMIENTO_FLAG);
+                }
+                movimiento = -15;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
-                //xQueueSend(cola_rota,NULL,portMAX_DELAY);
+                // Una vez está fuera de peligro vuelve a buscar
+                xQueueSend(cola_rota,NULL,portMAX_DELAY);
             }
             else if( evento == EVENTO_LINEA_TRASERA)
             {
                 estado = ESTADO_BUSCANDO_OPONENTE;
-                movimiento=5;
+
+                // Si esta realizando algún movimiento definido debo pararlo para
+                // dar prioridad a no salirse
+                if(movimiento_concreto_on == 1)
+                {
+                    xEventGroupSetBits(FlagsEventos, PARA_MOVIMIENTO_FLAG);
+                }
+                movimiento = 15;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
-                //xQueueSend(cola_rota,NULL,portMAX_DELAY);
+                // Una vez está fuera de peligro vuelve a buscar
+                xQueueSend(cola_rota,NULL,portMAX_DELAY);
+            }
+            else if(evento == WHISKER_FLAG)
+            {
+                // Si se activa el whisker retrocede un poco y avanza
+                // con más fuerza para darle un golpe de impacto
+                movimiento = -10;
+                xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
+                movimiento = 120;
+                xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
+                xQueueSend(cola_rota,NULL,portMAX_DELAY);
             }
             break;
         case ESTADO_ATAQUE_OPONENTE:
             if(evento == EVENTO_VISTO)
             {
                 estado = ESTADO_ATAQUE_OPONENTE;
-                movimiento=5;
+                movimiento = 1;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
-            }else if(evento == EVENTO_LINEA_DERECHA || evento == EVENTO_LINEA_IZQUIERDA )
+            }
+            else if(evento == EVENTO_LINEA_DERECHA || evento == EVENTO_LINEA_IZQUIERDA )
             {
                 estado = ESTADO_BUSCANDO_OPONENTE;
 
-                movimiento=-5;
+                // Si esta realizando algún movimiento definido debo pararlo para
+                // dar prioridad a no salirse
+                if(movimiento_concreto_on == 1)
+                {
+                    xEventGroupSetBits(FlagsEventos, PARA_MOVIMIENTO_FLAG);
+                }
+                movimiento = -15;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
-                //xQueueSend(cola_rota,NULL,portMAX_DELAY);
+                // Una vez está fuera de peligro vuelve a buscar
+                xQueueSend(cola_rota,NULL,portMAX_DELAY);
 
             }else if( evento == EVENTO_LINEA_TRASERA)
             {
                 estado = ESTADO_BUSCANDO_OPONENTE;
 
-                movimiento=5;
+                // Si esta realizando algún movimiento definido debo pararlo para
+                // dar prioridad a no salirse
+                if(movimiento_concreto_on == 1)
+                {
+                    xEventGroupSetBits(FlagsEventos, PARA_MOVIMIENTO_FLAG);
+                }
+                movimiento = 15;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
-                //xQueueSend(cola_rota,NULL,portMAX_DELAY);
+                // Una vez está fuera de peligro vuelve a buscar
+                xQueueSend(cola_rota,NULL,portMAX_DELAY);
 
             } else if (evento == EVENTO_NO_VISTO)
             {
-                    estado = ESTADO_BUSCANDO_OPONENTE;
-                    xQueueSend(cola_rota,NULL,portMAX_DELAY);
+                // Si deja de verlo vuelve a buscar
+                estado = ESTADO_BUSCANDO_OPONENTE;
+                xQueueSend(cola_rota,NULL,portMAX_DELAY);
+            }
+            else if(evento == WHISKER_FLAG)
+            {
+                // Si se activa el whisker retrocede un poco y avanza
+                // con más fuerza para darle un golpe de impacto
+                estado = ESTADO_BUSCANDO_OPONENTE;
+                movimiento = -10;
+                xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
+                movimiento= 120;
+                xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
+                xQueueSend(cola_rota,NULL,portMAX_DELAY);
             }
 
             break;
@@ -419,7 +504,7 @@ static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
 //
 //*****************************************************************************
 
-// Funci�n callback del timer antirrebote que pone posible_rebote
+// Función callback del timer antirrebote que pone posible_rebote
 // a cero para indicar que ya no hay peligro de rebote y se pueden
 // volver a tomar datos reales del whisker
 void vTimerCallback_rebote(TimerHandle_t timer)
@@ -427,26 +512,36 @@ void vTimerCallback_rebote(TimerHandle_t timer)
     posible_rebote = 0;
 }
 
-// Funci�n callback del adc que funciona como un trigger para
-// captar la informaci�n
+// Función callback del adc que funciona como un trigger para
+// captar la información
 void vTimerCallback_ADC(TimerHandle_t timer)
 {
     ADCProcessorTrigger(ADC1_BASE,3);
     xTimerReset(xTimer_ADC, portMAX_DELAY);
 }
 
+// Función callback que se activa pasado un tiempo de captar
+// una señal de línea blanca. Si pasado el tiempo la señal sigue
+// siendo igual, significa que no ha sido un error y debe hacer
+// algo al respecto. Función parecida al antirrebote del whisker.
 void vTimerCallback_Linea(TimerHandle_t timer)
 {
     if(GPIOPinRead(GPIO_PORTD_BASE,GPIO_PIN_2) == GPIO_PIN_2)
     {
         xEventGroupSetBits(FlagsEstados, EVENTO_LINEA_IZQUIERDA);
-    } else if(GPIOPinRead(GPIO_PORTD_BASE,GPIO_PIN_0) == GPIO_PIN_0)
+    }
+    else if(GPIOPinRead(GPIO_PORTD_BASE,GPIO_PIN_0) == GPIO_PIN_0)
     {
         xEventGroupSetBits(FlagsEstados, EVENTO_LINEA_DERECHA);
+    }
+    else if(GPIOPinRead(GPIO_PORTD_BASE,GPIO_PIN_3) == GPIO_PIN_3)
+    {
+        xEventGroupSetBits(FlagsEstados, EVENTO_LINEA_TRASERA);
     }
     timer_on = 0;
     xTimerStop(xTimer_Linea, portMAX_DELAY);
 }
+
 
 //*****************************************************************************
 //
@@ -457,18 +552,17 @@ int main(void)
 
 
 {
+    //
+    // Set the clocking to run at 40 MHz from the PLL.
+    //
+    MAP_SysCtlClockSet(SYSCTL_SYSDIV_5 | SYSCTL_USE_PLL | SYSCTL_XTAL_16MHZ |
+            SYSCTL_OSC_MAIN);
 
-	//
-	// Set the clocking to run at 40 MHz from the PLL.
-	//
-	MAP_SysCtlClockSet(SYSCTL_SYSDIV_5 | SYSCTL_USE_PLL | SYSCTL_XTAL_16MHZ |
-			SYSCTL_OSC_MAIN);
-
-	// INICIALIZACI�N MOTORES ***
+    // INICIALIZACIÓN MOTORES ***
     uint32_t pwm_clk;
     SysCtlPWMClockSet(SYSCTL_PWMDIV_64);
     SysCtlPeripheralEnable(SYSCTL_PERIPH_PWM1);     // Habilita modulo PWM
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);    // Habilita puerto salida para se�al PWM (ver en documentacion que pin se corresponde a cada m�dulo PWM)
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);    // Habilita puerto salida para seï¿½al PWM (ver en documentacion que pin se corresponde a cada mï¿½dulo PWM)
     GPIOPinTypePWM(GPIO_PORTF_BASE, GPIO_PIN_3);
     GPIOPinTypePWM(GPIO_PORTF_BASE, GPIO_PIN_2);
     GPIOPinConfigure(GPIO_PF3_M1PWM7);
@@ -477,24 +571,24 @@ int main(void)
     pwm_clk = SysCtlClockGet() / 64;
     val_load = (pwm_clk/ PERIOD_PWM) - 1;
 
-    PWMGenConfigure(PWM1_BASE, PWM_GEN_3, PWM_GEN_MODE_DOWN);    // M�dulo PWM contara hacia abajo
+    PWMGenConfigure(PWM1_BASE, PWM_GEN_3, PWM_GEN_MODE_DOWN);    // Mï¿½dulo PWM contara hacia abajo
     PWMGenPeriodSet(PWM1_BASE, PWM_GEN_3, val_load);
     PWMPulseWidthSet(PWM1_BASE, PWM_OUT_7, duty1*val_load/1000);
-    PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000); // Establece el periodo (en este caso, un porcentaje del valor m�ximo)
+    PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, duty2*val_load/1000); // Establece el periodo (en este caso, un porcentaje del valor mï¿½ximo)
     PWMOutputState(PWM1_BASE, PWM_OUT_7_BIT, true);
-    PWMOutputState(PWM1_BASE, PWM_OUT_6_BIT, true);              // Habilita la salida de la se�al
+    PWMOutputState(PWM1_BASE, PWM_OUT_6_BIT, true);              // Habilita la salida de la seï¿½al
     PWMGenEnable(PWM1_BASE, PWM_GEN_3);                          // Habilita/pone en marcha el generador PWM
 
     // Get the system clock speed.
     g_ulSystemClock = SysCtlClockGet();
 
-    // INICIALIZACI�N WHISKER Y SU INTERRUPCI�N ***
+    // INICIALIZACIÓN WHISKER Y SU INTERRUPCIÓN ***
     ButtonsInit();
     GPIOIntTypeSet(GPIO_PORTF_BASE, ALL_BUTTONS,GPIO_FALLING_EDGE);
     GPIOIntEnable(GPIO_PORTF_BASE,ALL_BUTTONS);
     IntEnable(INT_GPIOF);
 
-    // CONFIGURACI�N INFRARROJOS ***
+    // CONFIGURACIÓN INFRARROJOS ***
     SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOD);
     SysCtlPeripheralSleepEnable(SYSCTL_PERIPH_GPIOD);
     GPIOPinTypeGPIOInput(GPIO_PORTD_BASE, GPIO_PIN_0|GPIO_PIN_2 | GPIO_PIN_3);
@@ -503,7 +597,7 @@ int main(void)
     GPIOIntEnable(GPIO_PORTD_BASE,GPIO_PIN_0|GPIO_PIN_2 | GPIO_PIN_3);
     IntEnable(INT_GPIOD);
 
-    // CONFIGURACI�N ADC ***
+    // CONFIGURACIÓN ADC ***
     SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
     MAP_GPIOPinTypeGPIOInput(GPIO_PORTA_BASE,GPIO_PIN_2 | GPIO_PIN_3);
     GPIOIntEnable(GPIO_PORTA_BASE,GPIO_PIN_2 | GPIO_PIN_3);
@@ -521,7 +615,7 @@ int main(void)
     ADCSequenceStepConfigure(ADC1_BASE,3,0,ADC_CTL_CH8|ADC_CTL_IE |ADC_CTL_END);
     ADCSequenceEnable(ADC1_BASE,3);                                                 // ACTIVO LA SECUENCIA
 
-    // CREACI�N COLAS **********************************************
+    // CREACIÓN COLAS **********************************************
 
     // Cola del adc del sharp
     cola_adc1=xQueueCreate(8,sizeof(uint32_t));
@@ -558,47 +652,47 @@ int main(void)
         while(1);
     }
 
-    // CREACI�N DE TAREAS **********************************************
-	// Creaci�n de tarea de control de adc
+    // CREACIÓN DE TAREAS **********************************************
+    // Creación de tarea de control de adc
     if (xTaskCreate( TareaADC, "ADC", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY+1, NULL )!=pdPASS)
             while (1);
 
-    // Creaci�n de tarea de control de movimiento
+    // Creación de tarea de control de movimiento
     if (xTaskCreate( TareaMovimiento, "Movimiento", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY+1, NULL )!=pdPASS)
             while (1);
 
-    // Creaci�n de tarea de control de funcionamiento completo del robot por medio de una maquina de estados
+    // Creación de tarea de control de funcionamiento completo del robot por medio de una maquina de estados
     if (xTaskCreate( TareaMakinaEstados, "MaquinaEstados", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY+1, NULL )!=pdPASS)
             while (1);
 
-    // FLAGS, TIMERS Y SEM�FOROS ****************************************
+    // FLAGS, TIMERS Y SEMÁFOROS ****************************************
 
-	// Crea el grupo de eventos
-	FlagsEventos = xEventGroupCreate();
-	if( FlagsEventos == NULL )
-	{
-		while(1);
-	}
+    // Crea el grupo de eventos
+    FlagsEventos = xEventGroupCreate();
+    if( FlagsEventos == NULL )
+    {
+        while(1);
+    }
 
-	FlagsTareas = xEventGroupCreate();
-	if( FlagsTareas == NULL )
-	{
-	    while(1);
-	}
+    FlagsTareas = xEventGroupCreate();
+    if( FlagsTareas == NULL )
+    {
+        while(1);
+    }
 
-	FlagsEstados = xEventGroupCreate();
+    FlagsEstados = xEventGroupCreate();
     if( FlagsEstados == NULL )
     {
         while(1);
     }
 
-	// Crea el sem�foro de control de movimiento de los motores
-	 semaforo_freertos1=xSemaphoreCreateBinary();
-	 if ((semaforo_freertos1==NULL))
-	 {
-	     while (1); //No hay memoria para los semaforos
-	 }
-	 xSemaphoreGive(semaforo_freertos1);
+    // Crea el semáforo de control de movimiento de los motores
+     semaforo_freertos1=xSemaphoreCreateBinary();
+     if ((semaforo_freertos1==NULL))
+     {
+         while (1); //No hay memoria para los semaforos
+     }
+     xSemaphoreGive(semaforo_freertos1);
 
      // Crea el timer de control antirrebote del whisker
      xTimer_antirrebote = xTimerCreate("TimerSW2",0.5 * configTICK_RATE_HZ, pdFALSE,NULL,vTimerCallback_rebote);
@@ -621,7 +715,7 @@ int main(void)
           /* The timer was not created. */
           while(1);
      }
-     // Crea grupo de colas y a�ade las existentes
+     // Crea grupo de colas y añade las existentes
      xTimerStart(xTimer_ADC, portMAX_DELAY);
      grupo_colas = xQueueCreateSet( 16+16+16);
      if(grupo_colas==NULL)
@@ -645,19 +739,19 @@ int main(void)
       while(1);
     }
 
-	//
-	// Start the scheduler.  This should not return.
-	//
-	vTaskStartScheduler();	//el RTOS habilita las interrupciones al entrar aqui, asi que no hace falta habilitarlas
+    //
+    // Start the scheduler.  This should not return.
+    //
+    vTaskStartScheduler();  //el RTOS habilita las interrupciones al entrar aqui, asi que no hace falta habilitarlas
 
-	//
-	// In case the scheduler returns for some reason, print an error and loop
-	// forever.
-	//
+    //
+    // In case the scheduler returns for some reason, print an error and loop
+    // forever.
+    //
 
-	while(1)
-	{
-	}
+    while(1)
+    {
+    }
 }
 
 //*****************************************************************************
@@ -666,30 +760,30 @@ int main(void)
 //
 //*****************************************************************************
 
-// Interrupci�n de control del whisker
+// Interrupción de control del whisker
 void GPIOFIntHandler(void)
 {
-	BaseType_t xHigherPriorityTaskWoken=pdFALSE;
-	int32_t i32PinStatus=MAP_GPIOIntStatus(GPIO_PORTF_BASE,ALL_BUTTONS);
+    BaseType_t xHigherPriorityTaskWoken=pdFALSE;
+    int32_t i32PinStatus=MAP_GPIOIntStatus(GPIO_PORTF_BASE,ALL_BUTTONS);
 
-	// Solo puede activar la flag cuando no haya peligro de rebote
-	if ((i32PinStatus & WHISKER) && !posible_rebote)
+    // Solo puede activar la flag cuando no haya peligro de rebote
+    if ((i32PinStatus & WHISKER) && !posible_rebote)
     {
-	    //Activa WHISKER_FLAG
-    	xEventGroupSetBitsFromISR(FlagsEstados, WHISKER_FLAG, &xHigherPriorityTaskWoken );
-    	posible_rebote = 1;                     // Aviso de que lo recibido puede ser un rebote
-    	xTimerStart(xTimer_antirrebote, 0);     // Activo el timer de control de rebotes
+        //Activa WHISKER_FLAG
+        xEventGroupSetBitsFromISR(FlagsEstados, WHISKER_FLAG, &xHigherPriorityTaskWoken );
+        posible_rebote = 1;                     // Aviso de que lo recibido puede ser un rebote
+        xTimerStart(xTimer_antirrebote, 0);     // Activo el timer de control de rebotes
     }
-	else if(i32PinStatus & RIGHT_BUTTON)
-	{
-	    xEventGroupSetBitsFromISR(FlagsEstados, EVENTO_INICIO, &xHigherPriorityTaskWoken );
-	}
+    else if(i32PinStatus & RIGHT_BUTTON)
+    {
+        xEventGroupSetBitsFromISR(FlagsEstados, EVENTO_INICIO, &xHigherPriorityTaskWoken );
+    }
 
-	MAP_GPIOIntClear(GPIO_PORTF_BASE,ALL_BUTTONS);
-	portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
+    MAP_GPIOIntClear(GPIO_PORTF_BASE,ALL_BUTTONS);
+    portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
 }
 
-// Interrupci�n de control de los encoders
+// Interrupción de control de los encoders
 void GPIOAIntHandler(void)
 {
     BaseType_t xHigherPriorityTaskWoken=pdFALSE;
@@ -700,44 +794,38 @@ void GPIOAIntHandler(void)
     {
         xEventGroupSetBitsFromISR(FlagsEventos, ENC_RIGHT_FLAG, &xHigherPriorityTaskWoken );
     }
-    if (i32PinStatus & GPIO_PIN_3)
-    {
-        xEventGroupSetBitsFromISR(FlagsEventos, ENC_LEFT_FLAG, &xHigherPriorityTaskWoken );
-    }
 
     MAP_GPIOIntClear(GPIO_PORTA_BASE,GPIO_PIN_2|GPIO_PIN_3);
     portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
 }
 
-// Interrupci�n de control de los encoders
+// Interrupción de control de los encoders
 void GPIODIntHandler(void)
 {
     BaseType_t xHigherPriorityTaskWoken=pdFALSE;
     int32_t i32PinStatus=MAP_GPIOIntStatus(GPIO_PORTD_BASE,GPIO_PIN_0|GPIO_PIN_2|GPIO_PIN_3);
     if(timer_on == 0)
     {
-        timer_on=1;
-        // Activo la flag del encoder que se haya activado
+        // Activo el timer para cuando salte compruebe si ha sido un dato erroneo
+        timer_on = 1;
         if (i32PinStatus & GPIO_PIN_0)
         {
-            //xEventGroupSetBitsFromISR(FlagsEstados, EVENTO_LINEA_IZQUIERDA, &xHigherPriorityTaskWoken );
             xTimerStart(xTimer_Linea, portMAX_DELAY);
         }
         else if (i32PinStatus & GPIO_PIN_2)
         {
-            //xEventGroupSetBitsFromISR(FlagsEstados, EVENTO_LINEA_DERECHA, &xHigherPriorityTaskWoken );
             xTimerStart(xTimer_Linea, portMAX_DELAY);
         }
         else if (i32PinStatus & GPIO_PIN_3)
         {
-            //xEventGroupSetBitsFromISR(FlagsEstados, EVENTO_LINEA_TRASERA, &xHigherPriorityTaskWoken );
+            xTimerStart(xTimer_Linea, portMAX_DELAY);
         }
     }
     MAP_GPIOIntClear(GPIO_PORTD_BASE,GPIO_PIN_0|GPIO_PIN_2|GPIO_PIN_3);
     portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
 }
 
-// Interrupci�n de control de adc
+// Interrupción de control de adc
 void ADCIntHandler(void)
 {
     portBASE_TYPE higherPriorityTaskWoken=pdFALSE;
@@ -747,4 +835,3 @@ void ADCIntHandler(void)
     ADCIntClear(ADC1_BASE,3);
     portEND_SWITCHING_ISR(higherPriorityTaskWoken);
 }
-
