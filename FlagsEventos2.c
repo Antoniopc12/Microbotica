@@ -59,6 +59,7 @@ EventGroupHandle_t FlagsTareas, FlagsEstados;
 #define EVENTO_LINEA_DERECHA 1 << 8
 #define EVENTO_LINEA_TRASERA 1 << 9
 #define EVENTO_NO_VISTO 1 << 10
+#define EVENTO_BUSCANDO_MUCHO 1 <<11
 
 
 // DEFINICION ESTADOS
@@ -96,6 +97,7 @@ TimerHandle_t xTimer_antirrebote;
 TimerHandle_t xTimer_ADC;
 TimerHandle_t xTimer_Linea;
 TimerHandle_t xTimer_Whisker;
+TimerHandle_t xTimer_buscando;
 
 // INTERRUPCIONES ***
 void ADCIntHandler(void);
@@ -179,7 +181,7 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
     EventBits_t tarea;
     uint16_t angulo;
     int16_t muestra;                    // Variable que guarda lo mandado por las colas
-                  // Numero de pestañas que debe recorrer el robot para realizar el movimiento
+                                        // Numero de pestañas que debe recorrer el robot para realizar el movimiento
 
     while(1)
     {
@@ -375,7 +377,7 @@ static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
     while(1)
     {
         // Espera un evento
-        EventBits_t evento = xEventGroupWaitBits(FlagsEstados,WHISKER_FLAG|EVENTO_INICIO|EVENTO_VISTO|EVENTO_NO_VISTO|EVENTO_LINEA_DERECHA|EVENTO_LINEA_IZQUIERDA|EVENTO_LINEA_TRASERA,pdTRUE,pdFALSE,portMAX_DELAY);
+        EventBits_t evento = xEventGroupWaitBits(FlagsEstados,EVENTO_BUSCANDO_MUCHO|WHISKER_FLAG|EVENTO_INICIO|EVENTO_VISTO|EVENTO_NO_VISTO|EVENTO_LINEA_DERECHA|EVENTO_LINEA_IZQUIERDA|EVENTO_LINEA_TRASERA,pdTRUE,pdFALSE,portMAX_DELAY);
 
         switch(estado)
         {
@@ -385,6 +387,7 @@ static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
             {
                 //xSemaphoreTake(semaforo_freertos1,portMAX_DELAY);
                 estado = ESTADO_BUSCANDO_OPONENTE;
+                xTimerStart(xTimer_buscando, portMAX_DELAY);
                 xQueueSend(cola_rota,NULL,portMAX_DELAY);
             }
             break;
@@ -395,9 +398,11 @@ static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
                 estado = ESTADO_ATAQUE_OPONENTE;
                 movimiento = 1;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
+                xTimerStop(xTimer_buscando, portMAX_DELAY);
             }
             else if(evento == EVENTO_LINEA_DERECHA || evento == EVENTO_LINEA_IZQUIERDA)
             {
+                xTimerStop(xTimer_buscando, portMAX_DELAY);
                 estado = ESTADO_BUSCANDO_OPONENTE;
 
                 // Si esta realizando algún movimiento definido debo pararlo para
@@ -410,9 +415,11 @@ static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
                 // Una vez está fuera de peligro vuelve a buscar
                 xQueueSend(cola_rota,NULL,portMAX_DELAY);
+                xTimerStart(xTimer_buscando, portMAX_DELAY);
             }
             else if( evento == EVENTO_LINEA_TRASERA)
             {
+                xTimerStop(xTimer_buscando, portMAX_DELAY);
                 estado = ESTADO_BUSCANDO_OPONENTE;
 
                 // Si esta realizando algún movimiento definido debo pararlo para
@@ -425,9 +432,11 @@ static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
                 // Una vez está fuera de peligro vuelve a buscar
                 xQueueSend(cola_rota,NULL,portMAX_DELAY);
+                xTimerStart(xTimer_buscando, portMAX_DELAY);
             }
             else if(evento == WHISKER_FLAG)
             {
+                xTimerStop(xTimer_buscando, portMAX_DELAY);
                 // Si se activa el whisker retrocede un poco y avanza
                 // con más fuerza para darle un golpe de impacto
                 movimiento = -10;
@@ -435,6 +444,14 @@ static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
                 movimiento = 120;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
                 xQueueSend(cola_rota,NULL,portMAX_DELAY);
+                xTimerStart(xTimer_buscando, portMAX_DELAY);
+            }
+            else if(evento == EVENTO_BUSCANDO_MUCHO)
+            {
+                movimiento = -15;
+                xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
+                xQueueSend(cola_rota,NULL,portMAX_DELAY);
+                xTimerStart(xTimer_buscando, portMAX_DELAY);
             }
             break;
         case ESTADO_ATAQUE_OPONENTE:
@@ -443,6 +460,7 @@ static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
                 estado = ESTADO_ATAQUE_OPONENTE;
                 movimiento = 1;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
+                xTimerStart(xTimer_buscando, portMAX_DELAY);
             }
             else if(evento == EVENTO_LINEA_DERECHA || evento == EVENTO_LINEA_IZQUIERDA )
             {
@@ -458,6 +476,7 @@ static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
                 // Una vez está fuera de peligro vuelve a buscar
                 xQueueSend(cola_rota,NULL,portMAX_DELAY);
+                xTimerStart(xTimer_buscando, portMAX_DELAY);
 
             }else if( evento == EVENTO_LINEA_TRASERA)
             {
@@ -473,12 +492,14 @@ static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
                 // Una vez está fuera de peligro vuelve a buscar
                 xQueueSend(cola_rota,NULL,portMAX_DELAY);
+                xTimerStart(xTimer_buscando, portMAX_DELAY);
 
             } else if (evento == EVENTO_NO_VISTO)
             {
                 // Si deja de verlo vuelve a buscar
                 estado = ESTADO_BUSCANDO_OPONENTE;
                 xQueueSend(cola_rota,NULL,portMAX_DELAY);
+                xTimerStart(xTimer_buscando, portMAX_DELAY);
             }
             else if(evento == WHISKER_FLAG)
             {
@@ -490,6 +511,7 @@ static portTASK_FUNCTION(TareaMakinaEstados,pvParameters)
                 movimiento= 120;
                 xQueueSend(cola_avanza,&movimiento,portMAX_DELAY);
                 xQueueSend(cola_rota,NULL,portMAX_DELAY);
+                xTimerStart(xTimer_buscando, portMAX_DELAY);
             }
 
             break;
@@ -518,6 +540,11 @@ void vTimerCallback_ADC(TimerHandle_t timer)
 {
     ADCProcessorTrigger(ADC1_BASE,3);
     xTimerReset(xTimer_ADC, portMAX_DELAY);
+}
+
+void vTimerCallback_buscando(TimerHandle_t timer)
+{
+    xEventGroupSetBits(FlagsEstados, EVENTO_BUSCANDO_MUCHO);
 }
 
 // Función callback que se activa pasado un tiempo de captar
@@ -709,12 +736,21 @@ int main(void)
           /* The timer was not created. */
           while(1);
      }
+
      xTimer_Linea = xTimerCreate("TimerSW2",0.1 * configTICK_RATE_HZ, pdFALSE,NULL,vTimerCallback_Linea);
      if( xTimer_Linea == NULL )
      {
           /* The timer was not created. */
           while(1);
      }
+
+    xTimer_buscando = xTimerCreate("Timerbuscando",3 * configTICK_RATE_HZ, pdFALSE,NULL,vTimerCallback_buscando);
+    if( xTimer_buscando == NULL )
+    {
+       /* The timer was not created. */
+       while(1);
+    }
+
      // Crea grupo de colas y añade las existentes
      xTimerStart(xTimer_ADC, portMAX_DELAY);
      grupo_colas = xQueueCreateSet( 16+16+16);
