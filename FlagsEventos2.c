@@ -268,8 +268,8 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
                 // o a que se le obligue a parar el movimiento al instante
                 while(numPest > 0)
                 {
-                    tarea = xEventGroupWaitBits(FlagsEventos,ENC_LEFT_FLAG|PARA_MOVIMIENTO_FLAG,pdTRUE,pdFALSE,portMAX_DELAY);
-                    if(tarea == ENC_LEFT_FLAG)
+                    tarea = xEventGroupWaitBits(FlagsEventos,ENC_RIGHT_FLAG|PARA_MOVIMIENTO_FLAG,pdTRUE,pdFALSE,portMAX_DELAY);
+                    if(tarea == ENC_RIGHT_FLAG)
                     {
                         numPest--;
                     }
@@ -321,8 +321,8 @@ static portTASK_FUNCTION(TareaMovimiento,pvParameters)
             // o a que se le obligue a parar el movimiento al instante
             while(numPest > 0)
             {
-                tarea = xEventGroupWaitBits(FlagsEventos,ENC_LEFT_FLAG|PARA_MOVIMIENTO_FLAG,pdTRUE,pdFALSE,portMAX_DELAY);
-                if(tarea == ENC_LEFT_FLAG)
+                tarea = xEventGroupWaitBits(FlagsEventos,ENC_RIGHT_FLAG|PARA_MOVIMIENTO_FLAG,pdTRUE,pdFALSE,portMAX_DELAY);
+                if(tarea == ENC_RIGHT_FLAG)
                 {
                     numPest--;
                 }
@@ -793,10 +793,6 @@ void GPIOAIntHandler(void)
     if (i32PinStatus & GPIO_PIN_2)
     {
         xEventGroupSetBitsFromISR(FlagsEventos, ENC_RIGHT_FLAG, &xHigherPriorityTaskWoken );
-    }
-    if (i32PinStatus & GPIO_PIN_3)
-    {
-        xEventGroupSetBitsFromISR(FlagsEventos, ENC_LEFT_FLAG, &xHigherPriorityTaskWoken );
     }
 
     MAP_GPIOIntClear(GPIO_PORTA_BASE,GPIO_PIN_2|GPIO_PIN_3);
